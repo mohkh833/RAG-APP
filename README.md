@@ -198,24 +198,6 @@ CREATE TABLE document_chunks (
 
 TypeORM runs with `synchronize: false`, so the schema is **not** auto-managed by the app — `init.sql` is the source of truth.
 
-### ⚠️ A note on the vector index (important)
-
-There is **intentionally no `ivfflat` index** in `init.sql`. An `ivfflat` index is *approximate*: it clusters rows into buckets and, by default, only searches one bucket per query. On a small table most buckets are empty, so a query can land on an empty bucket and **return zero results** — silently breaking retrieval.
-
-With a small-to-moderate number of chunks, exact search (no index, a plain sequential scan) is correct and fast. Only once you have **thousands** of chunks and scans get slow should you add the index:
-
-```sql
-CREATE INDEX document_chunks_embedding_idx
-  ON document_chunks USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);  -- rule of thumb: lists ≈ rows / 1000
-```
-
-…and raise recall per-connection when querying:
-
-```sql
-SET ivfflat.probes = 10;
-```
-
 ---
 
 ## Development
