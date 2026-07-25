@@ -1,98 +1,249 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# RAG App
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A self-hosted **Retrieval-Augmented Generation (RAG)** API built with [NestJS](https://nestjs.com/). It ingests text, stores vector embeddings in PostgreSQL (via [pgvector](https://github.com/pgvector/pgvector)), retrieves the most relevant chunks for a question, and generates a grounded, cited answer with a local LLM served by [Ollama](https://ollama.com/).
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Everything runs **locally** — no external API keys, no data leaving your machine:
 
-## Description
+- **Embeddings** — [`@xenova/transformers`](https://github.com/xenova/transformers.js) running `all-MiniLM-L6-v2` (384-dim) in-process.
+- **Vector store** — PostgreSQL + `pgvector`.
+- **Generation** — any Ollama model (default `llama3`).
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+---
 
-## Project setup
+## How it works
 
-```bash
-$ yarn install
+```
+                 ┌─────────────┐
+   POST /ingest  │  Chunking   │  split text into overlapping chunks
+   ───────────►  └──────┬──────┘
+                        ▼
+                 ┌─────────────┐
+                 │ Embeddings  │  all-MiniLM-L6-v2 → 384-dim vector
+                 └──────┬──────┘
+                        ▼
+                 ┌─────────────┐
+                 │  pgvector   │  INSERT chunk + embedding
+                 └─────────────┘
+
+                 ┌─────────────┐
+   POST /query   │ Embed query │
+   ───────────►  └──────┬──────┘
+                        ▼
+                 ┌─────────────┐
+                 │  Retrieval  │  ORDER BY embedding <=> query  (cosine)
+                 └──────┬──────┘
+                        ▼
+                 ┌─────────────┐
+                 │ Generation  │  Ollama answers using ONLY retrieved context
+                 └──────┬──────┘
+                        ▼
+                   { answer, sources[] }
 ```
 
-## Compile and run the project
+Each concern is its own NestJS service under [`src/rag/`](src/rag/):
+
+| Service | Responsibility |
+|---|---|
+| [`chunking`](src/rag/chunking/chunking.service.ts) | Split text into fixed-size overlapping chunks |
+| [`embedding`](src/rag/embedding/embedding.service.ts) | Turn text into a 384-dim vector (lazy-loaded model) |
+| [`ingestion`](src/rag/ingestion/ingestion.service.ts) | Chunk → embed → store in `document_chunks` |
+| [`retrieval`](src/rag/retrieval/retrieval.service.ts) | Nearest-neighbour vector search over stored chunks |
+| [`generation`](src/rag/generation/generation.service.ts) | Build a grounded prompt and call Ollama |
+
+---
+
+## Prerequisites
+
+- **Node.js** 18+ and **Yarn**
+- **Docker** (for the PostgreSQL + pgvector database)
+- **[Ollama](https://ollama.com/)** installed and running locally, with a model pulled:
+  ```bash
+  ollama pull llama3
+  ```
+
+---
+
+## Quick start
 
 ```bash
-# development
-$ yarn run start
+# 1. Install dependencies
+yarn install
 
-# watch mode
-$ yarn run start:dev
+# 2. Start PostgreSQL with the pgvector extension (schema is auto-created on first run)
+docker compose up -d
 
-# production mode
-$ yarn run start:prod
+# 3. Make sure Ollama is running and a model is available
+ollama pull llama3
+
+# 4. Start the API
+yarn start:dev
 ```
 
-## Run tests
+The API listens on **http://localhost:3000**.
+
+> **Note:** The database schema in [`init.sql`](init.sql) is applied automatically the **first** time the Postgres container initializes an empty data volume. If you started the container before this file was wired in, apply it once manually:
+> ```bash
+> docker exec -i rag-postgres psql -U postgres -d ragdb < init.sql
+> ```
+
+---
+
+## Configuration
+
+All settings are read from environment variables (see [`.env`](.env)), falling back to sensible defaults:
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3000` | API port |
+| `DB_HOST` | `localhost` | Postgres host |
+| `DB_PORT` | `5432` | Postgres port |
+| `DB_USER` | `postgres` | Postgres user |
+| `DB_PASSWORD` | `postgres` | Postgres password |
+| `DB_NAME` | `ragdb` | Database name |
+| `CHUNK_SIZE` | `500` | Characters per chunk |
+| `CHUNK_OVERLAP` | `50` | Character overlap between chunks |
+| `TOP_K` | `5` | Number of chunks retrieved per query |
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama server URL |
+| `OLLAMA_MODEL` | `llama3` | Ollama model used for generation |
+
+---
+
+## API
+
+### `POST /rag/ingest`
+
+Ingest raw text. It is chunked, embedded, and stored.
 
 ```bash
-# unit tests
-$ yarn run test
-
-# e2e tests
-$ yarn run test:e2e
-
-# test coverage
-$ yarn run test:cov
+curl -X POST http://localhost:3000/rag/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "The Eiffel Tower is located in Paris, France. It was completed in 1889 and stands 330 meters tall.",
+    "documentId": 1
+  }'
 ```
 
-## Deployment
+**Body**
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `text` | string | yes | Text to ingest |
+| `documentId` | number | yes | Your identifier for the source document |
+| `metadata` | object | no | Arbitrary JSON stored alongside each chunk |
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+**Response**
+
+```json
+{ "chunksStored": 1 }
+```
+
+---
+
+### `POST /rag/ingest-file`
+
+Ingest a PDF (`multipart/form-data`). Text is extracted, then chunked and embedded.
 
 ```bash
-$ yarn install -g @nestjs/mau
-$ mau deploy
+curl -X POST http://localhost:3000/rag/ingest-file \
+  -F "file=@document.pdf" \
+  -F "documentId=2"
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+### `POST /rag/query`
 
-Check out a few resources that may come in handy when working with NestJS:
+Ask a question. Relevant chunks are retrieved and passed to the LLM, which answers using **only** that context and cites its sources.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```bash
+curl -X POST http://localhost:3000/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{ "question": "How tall is the Eiffel Tower?" }'
+```
 
-## Support
+**Response**
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+```json
+{
+  "answer": "330 meters [1].",
+  "sources": [
+    {
+      "content": "The Eiffel Tower is located in Paris, France. It was completed in 1889 and stands 330 meters tall.",
+      "similarity": 0.806
+    }
+  ]
+}
+```
 
-## Stay in touch
+If nothing relevant is stored, `answer` explains that no documents were found and `sources` is empty.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+---
 
-## License
+## Database schema
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Defined in [`init.sql`](init.sql):
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE document_chunks (
+  id          SERIAL PRIMARY KEY,
+  content     TEXT NOT NULL,
+  embedding   vector(384),
+  metadata    JSONB,
+  document_id INT,
+  created_at  TIMESTAMP DEFAULT now()
+);
+```
+
+TypeORM runs with `synchronize: false`, so the schema is **not** auto-managed by the app — `init.sql` is the source of truth.
+
+### ⚠️ A note on the vector index (important)
+
+There is **intentionally no `ivfflat` index** in `init.sql`. An `ivfflat` index is *approximate*: it clusters rows into buckets and, by default, only searches one bucket per query. On a small table most buckets are empty, so a query can land on an empty bucket and **return zero results** — silently breaking retrieval.
+
+With a small-to-moderate number of chunks, exact search (no index, a plain sequential scan) is correct and fast. Only once you have **thousands** of chunks and scans get slow should you add the index:
+
+```sql
+CREATE INDEX document_chunks_embedding_idx
+  ON document_chunks USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 100);  -- rule of thumb: lists ≈ rows / 1000
+```
+
+…and raise recall per-connection when querying:
+
+```sql
+SET ivfflat.probes = 10;
+```
+
+---
+
+## Development
+
+```bash
+yarn start          # start
+yarn start:dev      # start in watch mode
+yarn start:prod     # run the compiled build (node dist/main)
+yarn build          # compile to dist/
+yarn lint           # eslint --fix
+yarn format         # prettier
+```
+
+## Tests
+
+```bash
+yarn test           # unit tests
+yarn test:e2e       # end-to-end tests
+yarn test:cov       # coverage
+```
+
+---
+
+## Tech stack
+
+- **NestJS 10** — application framework
+- **TypeORM** + **pg** — database access
+- **PostgreSQL** + **pgvector** (`ankane/pgvector` image) — vector storage & search
+- **@xenova/transformers** (`all-MiniLM-L6-v2`) — local embeddings
+- **Ollama** — local LLM generation
+- **pdf-parse** — PDF text extraction
