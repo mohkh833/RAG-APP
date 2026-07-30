@@ -4,9 +4,9 @@ A self-hosted **Retrieval-Augmented Generation (RAG)** API built with [NestJS](h
 
 Everything runs **locally** — no external API keys, no data leaving your machine:
 
-- **Embeddings** — [`@xenova/transformers`](https://github.com/xenova/transformers.js) running `all-MiniLM-L6-v2` (384-dim) in-process.
+- **Embeddings** — [`@xenova/transformers`](https://github.com/xenova/transformers.js) running `paraphrase-multilingual-MiniLM-L12-v2` (384-dim) in-process, so documents and questions can be in different languages.
 - **Vector store** — PostgreSQL + `pgvector`.
-- **Generation** — any Ollama model (default `llama3`).
+- **Generation** — any Ollama model (default `llama3`), answering in the same language as the question.
 
 ---
 
@@ -18,7 +18,7 @@ Everything runs **locally** — no external API keys, no data leaving your machi
    ───────────►  └──────┬──────┘
                         ▼
                  ┌─────────────┐
-                 │ Embeddings  │  all-MiniLM-L6-v2 → 384-dim vector
+                 │ Embeddings  │  multilingual MiniLM → 384-dim vector
                  └──────┬──────┘
                         ▼
                  ┌─────────────┐
@@ -31,13 +31,13 @@ Everything runs **locally** — no external API keys, no data leaving your machi
                         ▼
                  ┌─────────────┐
                  │  Retrieval  │  ORDER BY embedding <=> query  (cosine)
-                 └──────┬──────┘
+                 └──────┬──────┘  then drop hits below SIMILARITY_THRESHOLD
                         ▼
                  ┌─────────────┐
                  │ Generation  │  Ollama answers using ONLY retrieved context
                  └──────┬──────┘
                         ▼
-                   { answer, sources[] }
+                   { answer, sources[] }        (or SSE tokens via /query-stream)
 ```
 
 Each concern is its own NestJS service under [`src/rag/`](src/rag/):
@@ -47,8 +47,8 @@ Each concern is its own NestJS service under [`src/rag/`](src/rag/):
 | [`chunking`](src/rag/chunking/chunking.service.ts) | Split text into fixed-size overlapping chunks |
 | [`embedding`](src/rag/embedding/embedding.service.ts) | Turn text into a 384-dim vector (lazy-loaded model) |
 | [`ingestion`](src/rag/ingestion/ingestion.service.ts) | Chunk → embed → store in `document_chunks` |
-| [`retrieval`](src/rag/retrieval/retrieval.service.ts) | Nearest-neighbour vector search over stored chunks |
-| [`generation`](src/rag/generation/generation.service.ts) | Build a grounded prompt and call Ollama |
+| [`retrieval`](src/rag/retrieval/retrieval.service.ts) | Nearest-neighbour vector search, filtered by a minimum similarity |
+| [`generation`](src/rag/generation/generation.service.ts) | Build a grounded prompt and call Ollama (buffered or streaming) |
 
 ---
 
@@ -103,6 +103,7 @@ All settings are read from environment variables (see [`.env`](.env)), falling b
 | `CHUNK_SIZE` | `500` | Characters per chunk |
 | `CHUNK_OVERLAP` | `50` | Character overlap between chunks |
 | `TOP_K` | `5` | Number of chunks retrieved per query |
+| `SIMILARITY_THRESHOLD` | `0.5` | Minimum cosine similarity a chunk must reach to be used as context |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | `llama3` | Ollama model used for generation |
 
@@ -153,7 +154,7 @@ curl -X POST http://localhost:3000/rag/ingest-file \
 
 ### `POST /rag/query`
 
-Ask a question. Relevant chunks are retrieved and passed to the LLM, which answers using **only** that context and cites its sources.
+Ask a question. Relevant chunks are retrieved and passed to the LLM, which answers using **only** that context, cites its sources, and replies in the **same language as the question**.
 
 ```bash
 curl -X POST http://localhost:3000/rag/query \
@@ -175,7 +176,33 @@ curl -X POST http://localhost:3000/rag/query \
 }
 ```
 
-If nothing relevant is stored, `answer` explains that no documents were found and `sources` is empty.
+If nothing scores at or above `SIMILARITY_THRESHOLD`, `answer` explains that no documents were found and `sources` is empty.
+
+---
+
+### `POST /rag/query-stream`
+
+Same as `/rag/query`, but the answer is streamed token by token as **Server-Sent Events** instead of being buffered until complete. Sources are not returned on this endpoint.
+
+```bash
+curl -N -X POST http://localhost:3000/rag/query-stream \
+  -H "Content-Type: application/json" \
+  -d '{ "question": "How tall is the Eiffel Tower?" }'
+```
+
+**Response** (`text/event-stream`)
+
+```
+data: {"token":"330"}
+
+data: {"token":" meters"}
+
+data: {"token":" [1]."}
+
+data: {"done":true}
+```
+
+If generation fails mid-stream, a final `data: {"error":"..."}` event is sent before the connection closes.
 
 ---
 
@@ -226,6 +253,6 @@ yarn test:cov       # coverage
 - **NestJS 10** — application framework
 - **TypeORM** + **pg** — database access
 - **PostgreSQL** + **pgvector** (`ankane/pgvector` image) — vector storage & search
-- **@xenova/transformers** (`all-MiniLM-L6-v2`) — local embeddings
+- **@xenova/transformers** (`paraphrase-multilingual-MiniLM-L12-v2`) — local multilingual embeddings
 - **Ollama** — local LLM generation
 - **pdf-parse** — PDF text extraction
