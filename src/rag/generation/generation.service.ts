@@ -29,7 +29,8 @@ export class GenerationService {
       .map((c, i) => `[${i + 1}] ${c.content}`)
       .join('\n\n');
     return `You are a helpful assistant. Answer the question using ONLY the context below.
-If the answer is not contained in the context, say "I don't know based on the provided documents."
+Answer in the same language as the question.
+If the answer is not contained in the context, say "I don't know based on the provided documents." in the same language as the question.
 Cite which numbered source(s) you used, like [1], [2].
 
 Context:

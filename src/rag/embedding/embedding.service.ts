@@ -8,10 +8,15 @@ export class EmbeddingService {
   private async getEmbedder() {
     if (this.embedder) return this.embedder;
     if (!this.loadingPromise) {
-      this.logger.log('Loading local embedding model (first call only)...');
+      this.logger.log(
+        'Loading local multilingual embedding model (first call only)...',
+      );
       this.loadingPromise = import('@xenova/transformers').then(
         ({ pipeline }) =>
-          pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2'),
+          pipeline(
+            'feature-extraction',
+            'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
+          ),
       );
     }
     this.embedder = await this.loadingPromise;
