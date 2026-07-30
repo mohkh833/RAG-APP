@@ -13,7 +13,7 @@ export class GenerationService {
   private ollama: Ollama;
 
   constructor(
-    private retreval: RetrievalService,
+    private retrieval: RetrievalService,
     private config: ConfigService,
   ) {
     this.ollama = new Ollama({
@@ -22,7 +22,7 @@ export class GenerationService {
   }
 
   async answer(question: string): Promise<RagAnswer> {
-    const chunks = await this.retreval.retrieve(question);
+    const chunks = await this.retrieval.retrieve(question);
 
     if (chunks.length == 0) {
       return {

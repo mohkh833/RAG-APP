@@ -25,13 +25,6 @@ export class RetrievalService {
     const queryVector = await this.embedding.embed(query);
     const vectorLiteral = `[${queryVector.join(',')}]`;
 
-    console.log('DEBUG k:', k);
-    console.log('DEBUG queryVector length:', queryVector.length);
-    console.log(
-      'DEBUG vectorLiteral (first 80 chars):',
-      vectorLiteral.slice(0, 80),
-    );
-
     const result = await this.repo.query(
       `SELECT content, metadata,
             1 - (embedding <=> $1) AS similarity
