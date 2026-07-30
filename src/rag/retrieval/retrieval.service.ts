@@ -22,6 +22,9 @@ export class RetrievalService {
 
   async retrieve(query: string, topK?: number): Promise<RetrievalChunk[]> {
     const k = topK ?? parseInt(this.config.get('TOP_K', '5'), 10);
+    const threshold = parseFloat(
+      this.config.get('SIMILARITY_THRESHOLD', '0.5'),
+    );
     const queryVector = await this.embedding.embed(query);
     const vectorLiteral = `[${queryVector.join(',')}]`;
 
@@ -34,8 +37,6 @@ export class RetrievalService {
       [vectorLiteral, k],
     );
 
-    console.log('DEBUG result:', JSON.stringify(result));
-
-    return result;
+    return result.filter((r) => r.similarity >= threshold);
   }
 }
