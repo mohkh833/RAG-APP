@@ -46,7 +46,7 @@ export class RagController {
 
   @Post('query')
   async query(@Body() dto: QueryDto) {
-    return this.generation.answer(dto.question);
+    return this.generation.answer(dto.question, dto.topK, dto.history ?? []);
   }
 
   @Post('query-stream')
@@ -56,7 +56,11 @@ export class RagController {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
     try {
-      for await (const token of this.generation.answerStream(dto.question)) {
+      for await (const token of this.generation.answerStream(
+        dto.question,
+        dto.topK,
+        dto.history ?? [],
+      )) {
         res.write(`data: ${JSON.stringify({ token })}\n\n`);
       } 
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);

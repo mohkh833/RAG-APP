@@ -1,3 +1,8 @@
+export class ChatMessage {
+  role!: 'user' | 'assistant';
+  content!: string;
+}
+
 export class IngestTextDto {
   text!: string;
   title?: string;
@@ -8,4 +13,5 @@ export class IngestTextDto {
 export class QueryDto {
   question!: string;
   topK?: number;
+  history?: ChatMessage[];
 }

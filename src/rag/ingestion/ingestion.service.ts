@@ -48,6 +48,8 @@ export class IngestionService {
     const alreadyIngested = await this.findIngested(textHash);
     if (alreadyIngested) return alreadyIngested;
 
+    const documentTitle = opts.title ?? 'Untitled document';
+
     const chunks = this.chunking.chunk(text);
     const unique: { content: string; contentHash: string }[] = [];
     const seen = new Set<string>();
@@ -66,12 +68,18 @@ export class IngestionService {
 
     // Embed before opening the transaction: inference is slow, and a failure
     // here must leave no document row behind for the content hash to claim.
+    //
+    // Note: we embed a title-prefixed version of each chunk so isolated
+    // pronoun references (e.g. "the ship" instead of "the Titanic") still
+    // carry enough context to be found by retrieval — but we store and
+    // return the ORIGINAL, unprefixed content so answers/citations stay clean.
     const embedded: { content: string; contentHash: string; vector: string }[] =
       [];
     for (const chunk of unique) {
+      const enrichedForEmbedding = `Document: ${documentTitle}\n${chunk.content}`;
       embedded.push({
         ...chunk,
-        vector: toVectorLiteral(await this.embedding.embed(chunk.content)),
+        vector: toVectorLiteral(await this.embedding.embed(enrichedForEmbedding)),
       });
     }
 
@@ -81,7 +89,7 @@ export class IngestionService {
       const documentId = await this.documentRepo.manager.transaction(
         async (manager) => {
           const document = await manager.getRepository(Document).save({
-            title: opts.title ?? 'Untitled document',
+            title: documentTitle,
             source: opts.source,
             contentHash: textHash,
           });
@@ -91,7 +99,7 @@ export class IngestionService {
               `INSERT INTO document_chunks (content, embedding, metadata, document_id, content_hash)
                VALUES ($1, $2, $3, $4, $5)`,
               [
-                chunk.content,
+                chunk.content, // stored content stays the clean, original chunk
                 chunk.vector,
                 metadata,
                 document.id,
@@ -113,7 +121,6 @@ export class IngestionService {
         chunksSkipped: skipped,
       };
     } catch (err) {
-      // A concurrent ingest of identical text won the unique constraint race.
       const driverError = (err as { driverError?: { code?: string } })
         ?.driverError;
       if (driverError?.code === UNIQUE_VIOLATION) {
