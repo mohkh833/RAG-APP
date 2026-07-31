@@ -1,6 +1,7 @@
 export class IngestTextDto {
   text!: string;
-  documentId!: number;
+  title?: string;
+  source?: string;
   metadata?: Record<string, any>;
 }
 

@@ -22,23 +22,25 @@ export class RagController {
 
   @Post('ingest')
   async ingest(@Body() dto: IngestTextDto) {
-    return this.ingestion.ingestText(
-      dto.text,
-      dto.documentId,
-      dto.metadata ?? {},
-    );
+    return this.ingestion.ingestText(dto.text, {
+      title: dto.title,
+      source: dto.source,
+      metadata: dto.metadata,
+    });
   }
 
   @Post('ingest-file')
   @UseInterceptors(FileInterceptor('file'))
   async ingestFile(
     @UploadedFile() file: MulterFile,
-    @Body('documentId') documentId: string,
+    @Body('title') title?: string,
   ) {
     const pdfParse = (await import('pdf-parse')).default;
     const parsed = await pdfParse(file.buffer);
-    return this.ingestion.ingestText(parsed.text, parseInt(documentId, 10), {
-      filename: file.originalname,
+    return this.ingestion.ingestText(parsed.text, {
+      title: title ?? file.originalname,
+      source: file.originalname,
+      metadata: { filename: file.originalname },
     });
   }
 
