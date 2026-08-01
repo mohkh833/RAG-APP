@@ -1,6 +1,6 @@
 # RAG App
 
-A self-hosted **Retrieval-Augmented Generation (RAG)** API built with [NestJS](https://nestjs.com/). It ingests text, stores vector embeddings in PostgreSQL (via [pgvector](https://github.com/pgvector/pgvector)), retrieves the most relevant chunks for a question, and generates a grounded, cited answer with a local LLM served by [Ollama](https://ollama.com/).
+A self-hosted **Retrieval-Augmented Generation (RAG)** API built with [NestJS](https://nestjs.com/). It ingests text and PDFs, stores vector embeddings in PostgreSQL (via [pgvector](https://github.com/pgvector/pgvector)), retrieves the most relevant chunks for a question, and generates a grounded, cited answer with a local LLM served by [Ollama](https://ollama.com/). Ingested documents can be listed and deleted, and multi-turn conversations are supported via query rewriting.
 
 Everything runs **locally** — no external API keys, no data leaving your machine:
 
@@ -26,8 +26,13 @@ Everything runs **locally** — no external API keys, no data leaving your machi
                  └─────────────┘
 
                  ┌─────────────┐
-   POST /query   │ Embed query │
-   ───────────►  └──────┬──────┘
+   POST /query   │  Rewrite    │  only if `history` was sent:
+   ───────────►  │   query     │  "Who built it?" → "Who built the Titanic?"
+                 └──────┬──────┘
+                        ▼
+                 ┌─────────────┐
+                 │ Embed query │
+                 └──────┬──────┘
                         ▼
                  ┌─────────────┐
                  │  Retrieval  │  ORDER BY embedding <=> query  (cosine)
@@ -44,11 +49,18 @@ Each concern is its own NestJS service under [`src/rag/`](src/rag/):
 
 | Service | Responsibility |
 |---|---|
-| [`chunking`](src/rag/chunking/chunking.service.ts) | Split text into fixed-size overlapping chunks |
+| [`chunking`](src/rag/chunking/chunking.service.ts) | Split text into sentences, then into overlapping chunks of ~`CHUNK_SIZE` characters |
 | [`embedding`](src/rag/embedding/embedding.service.ts) | Turn text into a 384-dim vector (lazy-loaded model) |
-| [`ingestion`](src/rag/ingestion/ingestion.service.ts) | Chunk → embed → store in `document_chunks` |
+| [`ingestion`](src/rag/ingestion/ingestion.service.ts) | Chunk → embed → store a `documents` row + its `document_chunks`, transactionally |
 | [`retrieval`](src/rag/retrieval/retrieval.service.ts) | Nearest-neighbour vector search, filtered by a minimum similarity |
-| [`generation`](src/rag/generation/generation.service.ts) | Build a grounded prompt and call Ollama (buffered or streaming) |
+| [`generation`](src/rag/generation/generation.service.ts) | Rewrite follow-ups, build a grounded prompt, call Ollama (buffered or streaming) |
+| [`documents`](src/rag/documents/document.service.ts) | List and delete ingested documents |
+
+### Two details worth knowing
+
+**Documents are deduplicated.** Ingesting text whose SHA-256 hash matches an existing document is a no-op — the existing `documentId` is returned with `chunksStored: 0`. Within a single document, identical chunks are also collapsed before embedding, and reported as `chunksSkipped`.
+
+**Chunks are embedded with their document title prefixed** (`Document: <title>\n<chunk>`), so an isolated chunk saying "the ship sank" is still retrievable by a question about the Titanic. The **original**, unprefixed chunk is what gets stored and cited, so answers stay clean.
 
 ---
 
@@ -102,10 +114,10 @@ All settings are read from environment variables (see [`.env`](.env)), falling b
 | `DB_NAME` | `ragdb` | Database name |
 | `CHUNK_SIZE` | `500` | Characters per chunk |
 | `CHUNK_OVERLAP` | `50` | Character overlap between chunks |
-| `TOP_K` | `5` | Number of chunks retrieved per query |
+| `TOP_K` | `5` | Number of chunks retrieved per query (overridable per request with `topK`) |
 | `SIMILARITY_THRESHOLD` | `0.5` | Minimum cosine similarity a chunk must reach to be used as context |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `llama3` | Ollama model used for generation |
+| `OLLAMA_MODEL` | `llama3` | Ollama model used for generation **and** for follow-up query rewriting |
 
 ---
 
@@ -113,14 +125,14 @@ All settings are read from environment variables (see [`.env`](.env)), falling b
 
 ### `POST /rag/ingest`
 
-Ingest raw text. It is chunked, embedded, and stored.
+Ingest raw text. It is chunked, embedded, and stored as a new document.
 
 ```bash
 curl -X POST http://localhost:3000/rag/ingest \
   -H "Content-Type: application/json" \
   -d '{
     "text": "The Eiffel Tower is located in Paris, France. It was completed in 1889 and stands 330 meters tall.",
-    "documentId": 1
+    "title": "Eiffel Tower"
   }'
 ```
 
@@ -129,25 +141,60 @@ curl -X POST http://localhost:3000/rag/ingest \
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `text` | string | yes | Text to ingest |
-| `documentId` | number | yes | Your identifier for the source document |
+| `title` | string | no | Document title. Defaults to `"Untitled document"`, and is prefixed to each chunk at embedding time |
+| `source` | string | no | Where the text came from (filename, URL, …) |
 | `metadata` | object | no | Arbitrary JSON stored alongside each chunk |
+
+The document id is assigned by the database — you don't supply it.
 
 **Response**
 
 ```json
-{ "chunksStored": 1 }
+{ "documentId": 1, "chunksStored": 1, "chunksSkipped": 0 }
 ```
+
+Re-posting identical `text` returns the same `documentId` with `chunksStored: 0` instead of storing it twice.
 
 ---
 
 ### `POST /rag/ingest-file`
 
-Ingest a PDF (`multipart/form-data`). Text is extracted, then chunked and embedded.
+Ingest a PDF (`multipart/form-data`). Text is extracted, then chunked and embedded. `title` is optional and falls back to the uploaded filename; `source` is always the filename.
 
 ```bash
 curl -X POST http://localhost:3000/rag/ingest-file \
   -F "file=@document.pdf" \
-  -F "documentId=2"
+  -F "title=Quarterly Report"
+```
+
+Returns the same shape as `/rag/ingest`.
+
+---
+
+### `GET /rag/documents`
+
+List every ingested document, newest first, with its chunk count.
+
+```json
+[
+  {
+    "id": 1,
+    "title": "Eiffel Tower",
+    "source": null,
+    "ingestedAt": "2026-07-31T21:04:11.000Z",
+    "chunkCount": 1
+  }
+]
+```
+
+---
+
+### `DELETE /rag/documents/:id`
+
+Delete a document and — via `ON DELETE CASCADE` — all of its chunks. Returns `{ "deleted": true }`, or `404` if the id doesn't exist.
+
+```bash
+curl -X DELETE http://localhost:3000/rag/documents/1
 ```
 
 ---
@@ -161,6 +208,14 @@ curl -X POST http://localhost:3000/rag/query \
   -H "Content-Type: application/json" \
   -d '{ "question": "How tall is the Eiffel Tower?" }'
 ```
+
+**Body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `question` | string | yes | The question to answer |
+| `topK` | number | no | Overrides the `TOP_K` env default for this request |
+| `history` | array | no | Prior turns as `{ "role": "user" \| "assistant", "content": "..." }` |
 
 **Response**
 
@@ -178,11 +233,29 @@ curl -X POST http://localhost:3000/rag/query \
 
 If nothing scores at or above `SIMILARITY_THRESHOLD`, `answer` explains that no documents were found and `sources` is empty.
 
+#### Follow-up questions
+
+Pass the prior turns as `history` and a context-dependent follow-up is first **rewritten into a standalone question**, so retrieval embeds "Who built the Titanic?" rather than the pronoun-laden "Who built it?":
+
+```bash
+curl -X POST http://localhost:3000/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Who built it?",
+    "history": [
+      { "role": "user", "content": "When did the Titanic sink?" },
+      { "role": "assistant", "content": "It sank in 1912." }
+    ]
+  }'
+```
+
+The rewrite preserves the language of the follow-up, and costs **one extra Ollama call** per query that includes history. If it fails or returns nothing, the original question is used instead. The history is also shown to the generation prompt — but only to resolve references, never as a source of facts.
+
 ---
 
 ### `POST /rag/query-stream`
 
-Same as `/rag/query`, but the answer is streamed token by token as **Server-Sent Events** instead of being buffered until complete. Sources are not returned on this endpoint.
+Same as `/rag/query` — including `topK` and `history` — but the answer is streamed token by token as **Server-Sent Events** instead of being buffered until complete. Sources are not returned on this endpoint.
 
 ```bash
 curl -N -X POST http://localhost:3000/rag/query-stream \
@@ -213,15 +286,26 @@ Defined in [`init.sql`](init.sql):
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE TABLE document_chunks (
-  id          SERIAL PRIMARY KEY,
-  content     TEXT NOT NULL,
-  embedding   vector(384),
-  metadata    JSONB,
-  document_id INT,
-  created_at  TIMESTAMP DEFAULT now()
+CREATE TABLE IF NOT EXISTS documents (
+  id           SERIAL PRIMARY KEY,
+  title        TEXT,
+  source       TEXT,
+  content_hash TEXT NOT NULL UNIQUE,
+  ingested_at  TIMESTAMP DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS document_chunks (
+  id           SERIAL PRIMARY KEY,
+  content      TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  embedding    vector(384),
+  metadata     JSONB,
+  document_id  INT REFERENCES documents(id) ON DELETE CASCADE,
+  created_at   TIMESTAMP DEFAULT now()
 );
 ```
+
+`documents.content_hash` is the `UNIQUE` constraint that makes re-ingesting identical text a no-op; `document_chunks.content_hash` identifies duplicate chunks within a document.
 
 TypeORM runs with `synchronize: false`, so the schema is **not** auto-managed by the app — `init.sql` is the source of truth.
 
