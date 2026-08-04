@@ -78,6 +78,34 @@ describe('ChunkingService', () => {
       }
     });
 
+    // Regression: match(/g) kept only the regions that matched and threw the
+    // rest away. "Node.js" is a period followed by a letter, so the leading
+    // header failed to match and vanished from the store entirely.
+    it('keeps text preceding an abbreviation-style period', async () => {
+      const service = await buildService(500, 50);
+      const chunks = service.chunk(
+        'Mohamed Khaled Shafik m.khaled@example.com works with Node.js and ' +
+          'Java for the backend. He designed the APIs.',
+      );
+
+      const joined = chunks.join(' ');
+      expect(joined).toContain('Mohamed Khaled Shafik');
+      expect(joined).toContain('m.khaled@example.com');
+      expect(joined).toContain('Node.js');
+    });
+
+    it('loses no characters from the input', async () => {
+      const service = await buildService(500, 50);
+      const text =
+        'Version 3.5 shipped on Feb. 2nd with Node.js 24. ' +
+        'Contact a.b@example.com for details! Is that clear? نعم؟';
+
+      // Every non-space character of the cleaned input must survive somewhere,
+      // in order — chunking may redistribute text but never drop it.
+      const strip = (s: string) => s.replace(/\s+/g, '');
+      expect(strip(service.chunk(text).join(' '))).toBe(strip(text));
+    });
+
     it('treats unpunctuated text as a single sentence', async () => {
       const service = await buildService(500, 50);
       expect(service.chunk('no terminator here at all')).toEqual([

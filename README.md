@@ -2,6 +2,8 @@
 
 A self-hosted **Retrieval-Augmented Generation (RAG)** API built with [NestJS](https://nestjs.com/). It ingests text and PDFs, stores vector embeddings in PostgreSQL (via [pgvector](https://github.com/pgvector/pgvector)), retrieves the most relevant chunks for a question, and generates a grounded, cited answer with a local LLM served by [Ollama](https://ollama.com/). Ingested documents can be listed and deleted, and multi-turn conversations are supported via query rewriting.
 
+A [Next.js web console](#web-console) for chatting, ingesting and managing documents ships alongside it in [`frontend/`](frontend/).
+
 Everything runs **locally** — no external API keys, no data leaving your machine:
 
 - **Embeddings** — [`@xenova/transformers`](https://github.com/xenova/transformers.js) running `paraphrase-multilingual-MiniLM-L12-v2` (384-dim) in-process, so documents and questions can be in different languages.
@@ -49,14 +51,16 @@ Each concern is its own NestJS service under [`src/rag/`](src/rag/):
 
 | Service | Responsibility |
 |---|---|
-| [`chunking`](src/rag/chunking/chunking.service.ts) | Split text into sentences, then into overlapping chunks of ~`CHUNK_SIZE` characters |
+| [`chunking`](src/rag/chunking/chunking.service.ts) | Split text into sentences (lossless split, not a match), then into overlapping chunks of ~`CHUNK_SIZE` characters |
 | [`embedding`](src/rag/embedding/embedding.service.ts) | Turn text into a 384-dim vector (lazy-loaded model) |
 | [`ingestion`](src/rag/ingestion/ingestion.service.ts) | Chunk → embed → store a `documents` row + its `document_chunks`, transactionally |
 | [`retrieval`](src/rag/retrieval/retrieval.service.ts) | Nearest-neighbour vector search, filtered by a minimum similarity |
 | [`generation`](src/rag/generation/generation.service.ts) | Rewrite follow-ups, build a grounded prompt, call Ollama (buffered or streaming) |
 | [`documents`](src/rag/documents/document.service.ts) | List and delete ingested documents |
 
-### Two details worth knowing
+### Three details worth knowing
+
+**Sentence splitting can't lose text.** [`chunking`](src/rag/chunking/chunking.service.ts) splits on a lookbehind (`/(?<=[.!?؟])\s+/`) rather than matching sentence-shaped regions. An earlier `match(/g)`-based version only kept regions that matched a full "terminator + whitespace" shape, so a period followed by a letter (`Node.js`, `m.khaled@…`) failed to match and **everything before it was silently discarded** — CV headers lost the candidate's name and became unsearchable. A split can only redistribute text, never drop it. Requiring whitespace *after* the terminator is what still keeps `Node.js` and decimals like `3.5` intact.
 
 **Documents are deduplicated.** Ingesting text whose SHA-256 hash matches an existing document is a no-op — the existing `documentId` is returned with `chunksStored: 0`. Within a single document, identical chunks are also collapsed before embedding, and reported as `chunksSkipped`.
 
@@ -279,6 +283,40 @@ If generation fails mid-stream, a final `data: {"error":"..."}` event is sent be
 
 ---
 
+## Web console
+
+[`frontend/`](frontend/) is a self-contained **Next.js 16 + React 19 + Tailwind 4** app — "Verdigris" — that drives every endpoint above. No auth, no database, no persistence: conversation state lives in React and a refresh resets it. See [`frontend/README.md`](frontend/README.md) for details.
+
+```bash
+# terminal 1 — backend on :3000
+yarn start:dev
+
+# terminal 2 — frontend on :3001
+cd frontend
+npm install        # first time only
+npm run dev
+```
+
+It is pinned to port **3001** so it never collides with the API on 3000, and talks to the API directly (the backend calls `app.enableCors()`) — no proxy or rewrite. Point it elsewhere with `NEXT_PUBLIC_RAG_API` in `frontend/.env.local` (see [`.env.local.example`](frontend/.env.local.example)).
+
+| Route | What it does |
+|---|---|
+| `/` | Chat. **Stream tokens** toggle picks `/rag/query-stream` (live tokens, no sources) or `/rag/query` (buffered, with a collapsible Sources panel showing each chunk's similarity) |
+| `/ingest` | Paste text or upload a PDF → `/rag/ingest`, `/rag/ingest-file` |
+| `/documents` | List and delete ingested documents |
+
+Worth knowing:
+
+- **SSE is hand-rolled.** `/rag/query-stream` is read with `fetch()` + `response.body.getReader()`, splitting on the `\n\n` record separator. `EventSource` can't be used — it is GET-only and this endpoint needs a JSON body.
+- **RTL per message.** Direction is detected from each message's own content, so an Arabic answer flips its layout and switches font while the English UI chrome stays LTR.
+- **Errors stay distinguishable.** A failed `fetch()` renders as "Backend unreachable", never as the backend's own "no relevant documents" answer. `class-validator` `message` arrays render as a list.
+
+### Effect on the backend build
+
+Nesting the app inside `rag-app/` required adding `"frontend"` to the `exclude` array in both [`tsconfig.json`](tsconfig.json) and [`tsconfig.build.json`](tsconfig.build.json) — otherwise `nest build` walks into the `.tsx` files and fails with ~195 JSX errors. No backend source was changed for the frontend.
+
+---
+
 ## Database schema
 
 Defined in [`init.sql`](init.sql):
@@ -340,3 +378,4 @@ yarn test:cov       # coverage
 - **@xenova/transformers** (`paraphrase-multilingual-MiniLM-L12-v2`) — local multilingual embeddings
 - **Ollama** — local LLM generation
 - **pdf-parse** — PDF text extraction
+- **Next.js 16** + **React 19** + **Tailwind CSS 4** — web console in [`frontend/`](frontend/)

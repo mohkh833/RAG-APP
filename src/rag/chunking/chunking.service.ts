@@ -27,12 +27,22 @@ export class ChunkingService {
   }
 
   private splitIntoSentences(text: string): string[] {
+    // Splitting, not matching. An earlier match(/g) version returned only the
+    // regions that matched a full "...terminator + whitespace" shape, which
+    // silently DISCARDED everything else: a period followed by a letter
+    // ("Node.js", "m.khaled@…") failed to match, so the scan resumed past it
+    // and every character before was dropped. CV headers lost their name that
+    // way and became unsearchable. A split can only ever redistribute text, so
+    // no input can go missing.
+    //
     // Includes ؟ (U+061F, Arabic question mark) alongside Latin terminators.
-    // Note: text with no punctuation at all still has no detectable sentence
-    // structure and will fall through to fixedSizeSlice once it exceeds size.
-    const matches = text.match(/[^.!?؟]+[.!?؟]+(\s|$)/g);
-    if (!matches) return [text];
-    return matches.map((s) => s.trim()).filter(Boolean);
+    // Requiring whitespace after the terminator is what keeps "Node.js" and
+    // decimals like "3.5" intact. Text with no punctuation at all comes back as
+    // one sentence and falls through to fixedSizeSlice once it exceeds size.
+    return text
+      .split(/(?<=[.!?؟])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
   }
 
   private packSentencesIntoChunks(

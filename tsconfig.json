@@ -21,5 +21,8 @@
     "noImplicitAny": false,
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false
-  }
+  },
+  // frontend/ is a self-contained Next.js app with its own tsconfig; the backend
+  // compiler must not walk into its .tsx files.
+  "exclude": ["node_modules", "dist", "frontend"]
 }
