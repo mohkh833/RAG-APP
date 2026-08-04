@@ -25,7 +25,7 @@ function toVectorLiteral(vector: number[]): string {
   return `[${vector.join(',')}]`;
 }
 
-function hashContent(content: string): string {
+export function hashContent(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 

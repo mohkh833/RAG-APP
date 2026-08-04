@@ -40,7 +40,7 @@ export class RagController {
 
     if(!file) throw new BadRequestException("No file uploaded");
 
-    if(file.mimeType !== 'application/pdf') throw new BadRequestException(`Expected a PDF, got ${file.mimetype}`);
+    if(file.mimetype !== 'application/pdf') throw new BadRequestException(`Expected a PDF, got ${file.mimetype}`);
 
     if(file.size > MAX_FILE_SIZE) throw new BadRequestException('File exceed 20MB limit');
     
