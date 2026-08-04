@@ -45,7 +45,24 @@ export class RagController {
     if(file.size > MAX_FILE_SIZE) throw new BadRequestException('File exceed 20MB limit');
     
     const pdfParse = (await import('pdf-parse')).default;
-    const parsed = await pdfParse(file.buffer);
+
+    // Uploads are untrusted: corrupt, encrypted, or password-protected PDFs
+    // make pdf-parse throw, and that is the client's problem, not a 500.
+    let parsed: { text: string };
+    try {
+      parsed = await pdfParse(file.buffer);
+    } catch (err) {
+      throw new BadRequestException(
+        `Could not read the PDF: ${err instanceof Error ? err.message : 'unknown error'}`,
+      );
+    }
+
+    if (!parsed.text?.trim()) {
+      throw new BadRequestException(
+        'The PDF contains no extractable text (it may be a scan needing OCR)',
+      );
+    }
+
     return this.ingestion.ingestText(parsed.text, {
       title: title ?? file.originalname,
       source: file.originalname,

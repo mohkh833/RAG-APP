@@ -46,6 +46,13 @@ Use the conversation history only to understand what the current question is ref
 If the answer is not contained in the context, say "I don't know based on the provided documents."
 Cite which numbered source(s) you used, like [1], [2].
 
+Write your answer in the SAME LANGUAGE as the question, regardless of what
+language the context is in. If the question is in Arabic, answer in Arabic —
+including the "I don't know" response above, translated.
+Answer the question directly. Do not comment on the wording of the sources or
+on the question itself; some sources are themselves phrased as questions, and
+that is not something to remark on.
+
 ${historyBlock}Context:
 ${context}
 
