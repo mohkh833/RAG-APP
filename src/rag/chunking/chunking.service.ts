@@ -17,7 +17,10 @@ export class ChunkingService {
   }
 
   private splitIntoSentences(text: string): string[] {
-    const matches = text.match(/[^.!?]+[.!?]+(\s|$)/g);
+    // Includes ؟ (U+061F, Arabic question mark) alongside Latin terminators.
+    // Note: text with no punctuation at all still has no detectable sentence
+    // structure and will fall through to fixedSizeSlice once it exceeds size.
+    const matches = text.match(/[^.!?؟]+[.!?؟]+(\s|$)/g);
     if (!matches) return [text];
     return matches.map((s) => s.trim()).filter(Boolean);
   }

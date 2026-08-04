@@ -15,5 +15,9 @@ CREATE TABLE IF NOT EXISTS document_chunks (
   embedding vector(384),
   metadata JSONB,
   document_id INT REFERENCES documents(id) ON DELETE CASCADE,
-  created_at TIMESTAMP DEFAULT now()
+  created_at TIMESTAMP DEFAULT now(),
+  content_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED
 );
+
+CREATE INDEX IF NOT EXISTS document_chunks_tsv_idx
+  ON document_chunks USING gin (content_tsv);

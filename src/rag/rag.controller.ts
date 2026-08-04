@@ -5,6 +5,7 @@ import {
   Res,
   UploadedFile,
   UseInterceptors,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { File as MulterFile } from 'multer';
@@ -13,6 +14,7 @@ import { IngestTextDto, QueryDto } from './dto';
 import { IngestionService } from './ingestion/ingestion.service';
 import { GenerationService } from './generation/generation.service';
 
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
 @Controller('rag')
 export class RagController {
   constructor(
@@ -35,6 +37,13 @@ export class RagController {
     @UploadedFile() file: MulterFile,
     @Body('title') title?: string,
   ) {
+
+    if(!file) throw new BadRequestException("No file uploaded");
+
+    if(file.mimeType !== 'application/pdf') throw new BadRequestException(`Expected a PDF, got ${file.mimetype}`);
+
+    if(file.size > MAX_FILE_SIZE) throw new BadRequestException('File exceed 20MB limit');
+    
     const pdfParse = (await import('pdf-parse')).default;
     const parsed = await pdfParse(file.buffer);
     return this.ingestion.ingestText(parsed.text, {
