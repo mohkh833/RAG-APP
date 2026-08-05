@@ -14,6 +14,13 @@ import { DocumentsController } from './documents/documents.controller';
 @Module({
   imports: [TypeOrmModule.forFeature([DocumentChunk, Document])],
   controllers: [RagController, DocumentsController],
-  providers: [ChunkingService, EmbeddingService, IngestionService, RetrievalService, GenerationService, DocumentService]
+  providers: [
+    ChunkingService,
+    EmbeddingService,
+    IngestionService,
+    RetrievalService,
+    GenerationService,
+    DocumentService,
+  ],
 })
 export class RagModule {}

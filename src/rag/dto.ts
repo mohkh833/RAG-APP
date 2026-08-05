@@ -1,4 +1,13 @@
-import { IsString, IsOptional, IsNumber, IsObject, MinLength, IsArray, ValidateNested, IsIn } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsNumber,
+  IsObject,
+  MinLength,
+  IsArray,
+  ValidateNested,
+  IsIn,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class ChatMessage {

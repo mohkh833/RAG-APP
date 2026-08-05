@@ -15,7 +15,7 @@ export class ChunkingService {
     );
 
     const cleaned = text.replace(/\s+/g, ' ').trim();
-    if(!cleaned) return [];
+    if (!cleaned) return [];
 
     const sentences = this.splitIntoSentences(cleaned);
     return this.packSentencesIntoChunks(sentences, size, overlap);
@@ -55,7 +55,8 @@ export class ChunkingService {
 
     // Length of current.join(' '), i.e. including the single-space separators.
     const joinedLength = (parts: string[]) =>
-      parts.reduce((sum, s) => sum + s.length, 0) + Math.max(0, parts.length - 1);
+      parts.reduce((sum, s) => sum + s.length, 0) +
+      Math.max(0, parts.length - 1);
 
     const wouldOverflow = (sentence: string) =>
       joinedLength([...current, sentence]) > size;

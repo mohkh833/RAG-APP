@@ -22,7 +22,7 @@ export class GenerationService {
     private config: ConfigService,
   ) {
     this.ollama = new Ollama({
-      host: this.config.get('OLLAMA_HOST', 'http://127.0.0.1:11434'),
+      host: this.config.get<string>('OLLAMA_HOST', 'http://127.0.0.1:11434'),
     });
   }
 
@@ -31,12 +31,17 @@ export class GenerationService {
     chunks: { content: string }[],
     history: ChatMessage[] = [],
   ): string {
-    const context = chunks.map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n');
+    const context = chunks
+      .map((c, i) => `[${i + 1}] ${c.content}`)
+      .join('\n\n');
 
     const historyBlock =
       history.length > 0
         ? `Conversation so far:\n${history
-            .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+            .map(
+              (m) =>
+                `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`,
+            )
             .join('\n')}\n\n`
         : '';
 
@@ -121,7 +126,7 @@ Standalone question:`;
   ): Promise<string> {
     if (history.length === 0) return question;
 
-    const model = this.config.get('OLLAMA_MODEL', 'llama3');
+    const model = this.config.get<string>('OLLAMA_MODEL', 'llama3');
 
     try {
       const response = await this.ollama.chat({
@@ -132,10 +137,14 @@ Standalone question:`;
         options: { temperature: 0 },
       });
 
-      const rewritten = response.message.content.trim().replace(/^["']|["']$/g, '');
+      const rewritten = response.message.content
+        .trim()
+        .replace(/^["']|["']$/g, '');
 
       if (!rewritten) {
-        this.logger.warn(`Query rewrite returned empty output, using original question`);
+        this.logger.warn(
+          `Query rewrite returned empty output, using original question`,
+        );
         return question;
       }
 
@@ -155,7 +164,10 @@ Standalone question:`;
     topK?: number,
     history: ChatMessage[] = [],
   ) {
-    const retrievalQuery = await this.rewriteQueryWithHistory(question, history);
+    const retrievalQuery = await this.rewriteQueryWithHistory(
+      question,
+      history,
+    );
     const chunks = await this.retrieval.retrieve(retrievalQuery, topK);
 
     if (chunks.length === 0) {
@@ -163,7 +175,7 @@ Standalone question:`;
     }
 
     const prompt = this.buildPrompt(question, chunks, history);
-    const model = this.config.get('OLLAMA_MODEL', 'llama3');
+    const model = this.config.get<string>('OLLAMA_MODEL', 'llama3');
     this.logger.log(`${mode} answer with model=${model}`);
 
     return { chunks, prompt, model };
@@ -189,7 +201,10 @@ Standalone question:`;
 
     return {
       answer: response.message.content,
-      sources: chunks.map((c) => ({ content: c.content, similarity: c.similarity })),
+      sources: chunks.map((c) => ({
+        content: c.content,
+        similarity: c.similarity,
+      })),
     };
   }
 

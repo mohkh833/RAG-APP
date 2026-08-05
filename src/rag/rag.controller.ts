@@ -8,11 +8,13 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { File as MulterFile } from 'multer';
 import type { Response } from 'express';
 import { IngestTextDto, QueryDto } from './dto';
 import { IngestionService } from './ingestion/ingestion.service';
 import { GenerationService } from './generation/generation.service';
+
+// Provided by @types/multer as a global namespace augmentation of Express.
+type MulterFile = Express.Multer.File;
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 @Controller('rag')
@@ -37,13 +39,14 @@ export class RagController {
     @UploadedFile() file: MulterFile,
     @Body('title') title?: string,
   ) {
+    if (!file) throw new BadRequestException('No file uploaded');
 
-    if(!file) throw new BadRequestException("No file uploaded");
+    if (file.mimetype !== 'application/pdf')
+      throw new BadRequestException(`Expected a PDF, got ${file.mimetype}`);
 
-    if(file.mimetype !== 'application/pdf') throw new BadRequestException(`Expected a PDF, got ${file.mimetype}`);
+    if (file.size > MAX_FILE_SIZE)
+      throw new BadRequestException('File exceed 20MB limit');
 
-    if(file.size > MAX_FILE_SIZE) throw new BadRequestException('File exceed 20MB limit');
-    
     const pdfParse = (await import('pdf-parse')).default;
 
     // Uploads are untrusted: corrupt, encrypted, or password-protected PDFs
@@ -88,10 +91,11 @@ export class RagController {
         dto.history ?? [],
       )) {
         res.write(`data: ${JSON.stringify({ token })}\n\n`);
-      } 
+      }
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     } catch (err) {
-      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      const message = err instanceof Error ? err.message : 'unknown error';
+      res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
     } finally {
       res.end();
     }

@@ -42,7 +42,10 @@ export class IngestionService {
     private documentRepo: Repository<Document>,
   ) {}
 
-  async ingestText(text: string, opts: IngestOptions = {}): Promise<IngestResult> {
+  async ingestText(
+    text: string,
+    opts: IngestOptions = {},
+  ): Promise<IngestResult> {
     const textHash = hashContent(text);
 
     const alreadyIngested = await this.findIngested(textHash);
@@ -79,7 +82,9 @@ export class IngestionService {
       const enrichedForEmbedding = `Document: ${documentTitle}\n${chunk.content}`;
       embedded.push({
         ...chunk,
-        vector: toVectorLiteral(await this.embedding.embed(enrichedForEmbedding)),
+        vector: toVectorLiteral(
+          await this.embedding.embed(enrichedForEmbedding),
+        ),
       });
     }
 

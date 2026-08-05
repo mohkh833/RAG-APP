@@ -52,7 +52,10 @@ describe('ChunkingService', () => {
 
       // Both halves must be present as separate units, i.e. the ؟ between
       // them was recognised as a terminator rather than ordinary text.
-      const sentences = chunks.join(' ').split('؟').filter((s) => s.trim());
+      const sentences = chunks
+        .join(' ')
+        .split('؟')
+        .filter((s) => s.trim());
       expect(sentences).toHaveLength(2);
       expect(chunks.some((c) => c.includes('متى غرقت السفينة تيتانيك'))).toBe(
         true,
@@ -224,7 +227,7 @@ describe('ChunkingService', () => {
     });
 
     it('survives a non-numeric CHUNK_SIZE / CHUNK_OVERLAP', async () => {
-      const service = await buildService(NaN as unknown as number, NaN as unknown as number);
+      const service = await buildService(NaN, NaN);
       const chunks = service.chunk('Short one. Short two.');
 
       expect(chunks.length).toBeGreaterThan(0);
