@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (NestJS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Unit tests
+        # `yarn test` runs jest with rootDir=src and testRegex .*\.spec\.ts$,
+        # so e2e specs under test/ are not picked up here.
+        run: yarn test
+
+      - name: Build
+        run: yarn build
+
+  frontend:
+    name: Frontend (Next.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        # NEXT_PUBLIC_* vars are inlined into the client bundle at build time.
+        # No backend runs in CI, so a placeholder is enough to make the build pass.
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:3000
+        run: npm run build
+
+# ---------------------------------------------------------------------------
+# Disabled on purpose: e2e tests (`yarn test:e2e`) need a real Postgres with the
+# pgvector extension and a running Ollama with the llama3 model pulled (multi-GB
+# download). That is too heavy to run on every push. Enable deliberately — e.g.
+# on a schedule or a manual workflow_dispatch — rather than on push/PR.
+#
+#  e2e:
+#    name: E2E (disabled)
+#    runs-on: ubuntu-latest
+#    services:
+#      postgres:
+#        image: ankane/pgvector
+#        env:
+#          POSTGRES_USER: postgres
+#          POSTGRES_PASSWORD: postgres
+#          POSTGRES_DB: ragdb
+#        ports:
+#          - 5432:5432
+#        options: >-
+#          --health-cmd "pg_isready -U postgres"
+#          --health-interval 10s
+#          --health-timeout 5s
+#          --health-retries 5
+#    steps:
+#      - uses: actions/checkout@v4
+#      - uses: actions/setup-node@v4
+#        with:
+#          node-version: 20
+#          cache: 'yarn'
+#      - run: yarn install --frozen-lockfile
+#      - name: Enable pgvector extension
+#        run: psql "postgresql://postgres:postgres@localhost:5432/ragdb" -f init.sql
+#      - run: yarn test:e2e
+#        env:
+#          DB_HOST: localhost
+#          DB_PORT: 5432
+#          DB_USER: postgres
+#          DB_PASSWORD: postgres
+#          DB_NAME: ragdb
+#          # Ollama is NOT provided here. Either run it as an extra service and
+#          # `ollama pull llama3` first, or mock the LLM calls in the e2e setup.
+#          OLLAMA_HOST: http://localhost:11434
+#          OLLAMA_MODEL: llama3
+# ---------------------------------------------------------------------------

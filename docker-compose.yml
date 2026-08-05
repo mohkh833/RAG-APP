@@ -1,6 +1,10 @@
 version: '3.8'
 
 services:
+  # --- Your existing Postgres service ---
+  # Kept as-is in spirit; added a healthcheck so `backend` can wait on it
+  # properly. If your real service already has other settings (a custom
+  # volume name, different ports), merge those in rather than overwrite.
   postgres:
     image: ankane/pgvector
     container_name: rag-postgres
@@ -13,7 +17,82 @@ services:
       - '5432:5432'
     volumes:
       - rag_pg_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama
+    container_name: rag-ollama
+    restart: unless-stopped
+    ports:
+      - '11434:11434'
+    volumes:
+      - rag_ollama_data:/root/.ollama
+    healthcheck:
+      test: ['CMD-SHELL', 'ollama list || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # One-shot job: pulls llama3 into the shared ollama volume, then exits.
+  # Safe to leave permanently -- if the model's already pulled, this is a
+  # fast no-op instead of a multi-GB re-download.
+  ollama-pull:
+    image: ollama/ollama
+    container_name: rag-ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ['ollama', 'pull', 'llama3']
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    restart: 'no'
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: ragdb
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: llama3
+      CHUNK_SIZE: 500
+      CHUNK_OVERLAP: 50
+      TOP_K: 5
+      SIMILARITY_THRESHOLD: 0.5
+      HYBRID_VECTOR_WEIGHT: 0.7
+      HYBRID_KEYWORD_WEIGHT: 0.3
+    ports:
+      - '3000:3000'
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3000
+    container_name: rag-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - '3001:3001'
 
 volumes:
   rag_pg_data:
+  rag_ollama_data:
