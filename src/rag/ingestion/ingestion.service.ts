@@ -44,11 +44,14 @@ export class IngestionService {
 
   async ingestText(
     text: string,
+    userId: number,
     opts: IngestOptions = {},
   ): Promise<IngestResult> {
     const textHash = hashContent(text);
 
-    const alreadyIngested = await this.findIngested(textHash);
+    // Dedupe is scoped to the owner: two users ingesting identical text each
+    // get their own document, since neither can retrieve the other's.
+    const alreadyIngested = await this.findIngested(textHash, userId);
     if (alreadyIngested) return alreadyIngested;
 
     const documentTitle = opts.title ?? 'Untitled document';
@@ -97,6 +100,7 @@ export class IngestionService {
             title: documentTitle,
             source: opts.source,
             contentHash: textHash,
+            userId,
           });
 
           for (const chunk of embedded) {
@@ -129,16 +133,19 @@ export class IngestionService {
       const driverError = (err as { driverError?: { code?: string } })
         ?.driverError;
       if (driverError?.code === UNIQUE_VIOLATION) {
-        const raced = await this.findIngested(textHash);
+        const raced = await this.findIngested(textHash, userId);
         if (raced) return raced;
       }
       throw err;
     }
   }
 
-  private async findIngested(textHash: string): Promise<IngestResult | null> {
+  private async findIngested(
+    textHash: string,
+    userId: number,
+  ): Promise<IngestResult | null> {
     const existing = await this.documentRepo.findOne({
-      where: { contentHash: textHash },
+      where: { contentHash: textHash, userId },
     });
     if (!existing) return null;
 

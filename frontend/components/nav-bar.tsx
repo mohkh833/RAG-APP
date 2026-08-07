@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useAuth } from '@/components/auth-state';
 
 const LINKS = [
   { href: '/', label: 'Chat' },
@@ -11,6 +12,8 @@ const LINKS = [
 
 export function NavBar() {
   const pathname = usePathname();
+  const { status, user, signOut } = useAuth();
+  const authenticated = status === 'authenticated';
 
   return (
     <nav className="sticky top-0 z-10 border-b border-line bg-sage-50/85 backdrop-blur">
@@ -30,8 +33,11 @@ export function NavBar() {
           </span>
         </Link>
 
+        {/* Navigation is hidden until sign-in: every destination behind it
+            needs a token, so offering the links would only route to a gate. */}
         <div className="ms-auto flex items-center gap-1">
-          {LINKS.map((link) => {
+          {authenticated &&
+            LINKS.map((link) => {
             const active =
               link.href === '/'
                 ? pathname === '/'
@@ -52,6 +58,24 @@ export function NavBar() {
               </Link>
             );
           })}
+
+          {authenticated && user && (
+            <div className="ms-3 flex items-center gap-2 border-s border-line ps-3">
+              <span
+                className="max-w-[14rem] truncate text-sm text-muted"
+                title={user.email}
+              >
+                {user.email}
+              </span>
+              <button
+                type="button"
+                onClick={signOut}
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-sage-200 hover:text-ink"
+              >
+                Sign out
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </nav>

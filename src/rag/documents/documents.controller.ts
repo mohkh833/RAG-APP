@@ -1,17 +1,31 @@
-import { Controller, Delete, Get, Param, ParseIntPipe } from '@nestjs/common';
+import {
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  UseGuards,
+} from '@nestjs/common';
+import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
+import { CurrentUser } from '../../auth/current-user.decorator';
+import type { RequestUser } from '../../auth/current-user.decorator';
 import { DocumentService } from './document.service';
 
 @Controller('rag/documents')
+@UseGuards(JwtAuthGuard)
 export class DocumentsController {
   constructor(private documents: DocumentService) {}
 
   @Get()
-  async list() {
-    return this.documents.list();
+  async list(@CurrentUser() user: RequestUser) {
+    return this.documents.list(user.userId);
   }
 
   @Delete(':id')
-  async delete(@Param('id', ParseIntPipe) id: number) {
-    return this.documents.delete(id);
+  async delete(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.documents.delete(id, user.userId);
   }
 }

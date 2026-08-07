@@ -9,6 +9,9 @@
  *   - StreamError   : the SSE stream opened fine, then emitted {"error": "..."}.
  */
 
+import { readToken } from './auth-storage';
+import type { AuthUser } from './auth-storage';
+
 export const API_BASE =
   process.env.NEXT_PUBLIC_RAG_API ?? 'http://localhost:3000';
 
@@ -76,6 +79,16 @@ export class ApiError extends Error {
   get isValidation() {
     return this.status === 400;
   }
+
+  /** No token, or one the backend rejected — the session is over. */
+  get isUnauthorized() {
+    return this.status === 401;
+  }
+
+  /** Authenticated, but the resource belongs to someone else. */
+  get isForbidden() {
+    return this.status === 403;
+  }
 }
 
 export class StreamError extends Error {
@@ -108,10 +121,35 @@ async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, normalizeMessages(body, response.status));
 }
 
+/**
+ * Every /rag route is behind JwtAuthGuard, so the stored token is attached to
+ * all of them. Reading it per request rather than caching it at module load
+ * keeps sign-in and sign-out effective immediately, without a reload.
+ *
+ * `withAuth: false` is for /auth/login and /auth/register, which are the two
+ * routes that must work while unauthenticated -- and where sending a stale,
+ * rejected token would be actively unhelpful.
+ */
+function withAuthHeaders(init: RequestInit, withAuth: boolean): RequestInit {
+  if (!withAuth) return init;
+
+  const token = readToken();
+  if (!token) return init;
+
+  return {
+    ...init,
+    headers: { ...init.headers, Authorization: `Bearer ${token}` },
+  };
+}
+
 /** Wraps fetch so a thrown TypeError becomes a NetworkError we can branch on. */
-async function send(path: string, init: RequestInit): Promise<Response> {
+async function send(
+  path: string,
+  init: RequestInit,
+  { withAuth = true }: { withAuth?: boolean } = {},
+): Promise<Response> {
   try {
-    return await fetch(`${API_BASE}${path}`, init);
+    return await fetch(`${API_BASE}${path}`, withAuthHeaders(init, withAuth));
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') throw err;
     throw new NetworkError();
@@ -122,15 +160,42 @@ async function postJson<T>(
   path: string,
   payload: unknown,
   signal?: AbortSignal,
+  options?: { withAuth?: boolean },
 ): Promise<T> {
-  const response = await send(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal,
-  });
+  const response = await send(
+    path,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal,
+    },
+    options,
+  );
   if (!response.ok) throw await toApiError(response);
   return (await response.json()) as T;
+}
+
+export interface Credentials {
+  email: string;
+  password: string;
+}
+
+export interface AuthResponse {
+  accessToken: string;
+  user: AuthUser;
+}
+
+export function register(credentials: Credentials): Promise<AuthResponse> {
+  return postJson<AuthResponse>('/auth/register', credentials, undefined, {
+    withAuth: false,
+  });
+}
+
+export function login(credentials: Credentials): Promise<AuthResponse> {
+  return postJson<AuthResponse>('/auth/login', credentials, undefined, {
+    withAuth: false,
+  });
 }
 
 export function ingestText(payload: {

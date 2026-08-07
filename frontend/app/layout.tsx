@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { IBM_Plex_Sans_Arabic, Inter, Newsreader } from 'next/font/google';
 import './globals.css';
 import { AppStateProvider } from '@/components/app-state';
+import { AuthGate } from '@/components/auth-gate';
+import { AuthProvider } from '@/components/auth-state';
 import { NavBar } from '@/components/nav-bar';
 
 const inter = Inter({
@@ -38,12 +40,14 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       className={`${inter.variable} ${newsreader.variable} ${plexArabic.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
-        <AppStateProvider>
-          <NavBar />
-          <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-5 py-8">
-            {children}
-          </main>
-        </AppStateProvider>
+        <AuthProvider>
+          <AppStateProvider>
+            <NavBar />
+            <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-5 py-8">
+              <AuthGate>{children}</AuthGate>
+            </main>
+          </AppStateProvider>
+        </AuthProvider>
       </body>
     </html>
   );

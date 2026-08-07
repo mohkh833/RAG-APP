@@ -4,20 +4,20 @@ import {
   Post,
   Res,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
-  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Response } from 'express';
-import { IngestTextDto, QueryDto } from './dto';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
 import { IngestionService } from './ingestion/ingestion.service';
 import { GenerationService } from './generation/generation.service';
+import { IngestTextDto, QueryDto } from './dto';
+import type { Response } from 'express';
+import type { RequestUser } from '../auth/current-user.decorator';
 
-// Provided by @types/multer as a global namespace augmentation of Express.
-type MulterFile = Express.Multer.File;
-
-const MAX_FILE_SIZE = 20 * 1024 * 1024;
 @Controller('rag')
+@UseGuards(JwtAuthGuard)
 export class RagController {
   constructor(
     private ingestion: IngestionService,
@@ -25,8 +25,8 @@ export class RagController {
   ) {}
 
   @Post('ingest')
-  async ingest(@Body() dto: IngestTextDto) {
-    return this.ingestion.ingestText(dto.text, {
+  async ingest(@Body() dto: IngestTextDto, @CurrentUser() user: RequestUser) {
+    return this.ingestion.ingestText(dto.text, user.userId, {
       title: dto.title,
       source: dto.source,
       metadata: dto.metadata,
@@ -36,65 +36,51 @@ export class RagController {
   @Post('ingest-file')
   @UseInterceptors(FileInterceptor('file'))
   async ingestFile(
-    @UploadedFile() file: MulterFile,
-    @Body('title') title?: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('title') title: string | undefined,
+    @CurrentUser() user: RequestUser,
   ) {
-    if (!file) throw new BadRequestException('No file uploaded');
-
-    if (file.mimetype !== 'application/pdf')
-      throw new BadRequestException(`Expected a PDF, got ${file.mimetype}`);
-
-    if (file.size > MAX_FILE_SIZE)
-      throw new BadRequestException('File exceed 20MB limit');
-
     const pdfParse = (await import('pdf-parse')).default;
-
-    // Uploads are untrusted: corrupt, encrypted, or password-protected PDFs
-    // make pdf-parse throw, and that is the client's problem, not a 500.
-    let parsed: { text: string };
-    try {
-      parsed = await pdfParse(file.buffer);
-    } catch (err) {
-      throw new BadRequestException(
-        `Could not read the PDF: ${err instanceof Error ? err.message : 'unknown error'}`,
-      );
-    }
-
-    if (!parsed.text?.trim()) {
-      throw new BadRequestException(
-        'The PDF contains no extractable text (it may be a scan needing OCR)',
-      );
-    }
-
-    return this.ingestion.ingestText(parsed.text, {
+    const parsed = await pdfParse(file.buffer);
+    return this.ingestion.ingestText(parsed.text, user.userId, {
       title: title ?? file.originalname,
       source: file.originalname,
-      metadata: { filename: file.originalname },
     });
   }
 
   @Post('query')
-  async query(@Body() dto: QueryDto) {
-    return this.generation.answer(dto.question, dto.topK, dto.history ?? []);
+  async query(@Body() dto: QueryDto, @CurrentUser() user: RequestUser) {
+    return this.generation.answer(
+      dto.question,
+      user.userId,
+      dto.topK,
+      dto.history,
+    );
   }
 
   @Post('query-stream')
-  async queryStream(@Body() dto: QueryDto, @Res() res: Response) {
-    res.setHeader('content-Type', 'text/event-stream');
+  async queryStream(
+    @Body() dto: QueryDto,
+    @CurrentUser() user: RequestUser,
+    @Res() res: Response,
+  ) {
+    res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
+
     try {
       for await (const token of this.generation.answerStream(
         dto.question,
+        user.userId,
         dto.topK,
-        dto.history ?? [],
+        dto.history,
       )) {
         res.write(`data: ${JSON.stringify({ token })}\n\n`);
       }
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'unknown error';
+      const message = err instanceof Error ? err.message : String(err);
       res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
     } finally {
       res.end();

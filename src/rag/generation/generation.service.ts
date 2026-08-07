@@ -161,6 +161,7 @@ Standalone question:`;
   private async prepare(
     question: string,
     mode: 'Generating' | 'Streaming',
+    userId: number,
     topK?: number,
     history: ChatMessage[] = [],
   ) {
@@ -168,7 +169,7 @@ Standalone question:`;
       question,
       history,
     );
-    const chunks = await this.retrieval.retrieve(retrievalQuery, topK);
+    const chunks = await this.retrieval.retrieve(retrievalQuery, userId, topK);
 
     if (chunks.length === 0) {
       return null;
@@ -183,10 +184,17 @@ Standalone question:`;
 
   async answer(
     question: string,
+    userId: number,
     topK?: number,
     history: ChatMessage[] = [],
   ): Promise<RagAnswer> {
-    const prepared = await this.prepare(question, 'Generating', topK, history);
+    const prepared = await this.prepare(
+      question,
+      'Generating',
+      userId,
+      topK,
+      history,
+    );
 
     if (!prepared) {
       return { answer: GenerationService.NO_CONTEXT_MESSAGE, sources: [] };
@@ -210,10 +218,17 @@ Standalone question:`;
 
   async *answerStream(
     question: string,
+    userId: number,
     topK?: number,
     history: ChatMessage[] = [],
   ): AsyncGenerator<string> {
-    const prepared = await this.prepare(question, 'Streaming', topK, history);
+    const prepared = await this.prepare(
+      question,
+      'Streaming',
+      userId,
+      topK,
+      history,
+    );
 
     if (!prepared) {
       yield GenerationService.NO_CONTEXT_MESSAGE;

@@ -21,4 +21,7 @@ export class Document {
 
   @CreateDateColumn({ name: 'ingested_at' })
   ingestedAt!: Date;
+
+  @Column({ name: 'user_id' })
+  userId!: number;
 }
